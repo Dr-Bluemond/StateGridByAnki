@@ -1,0 +1,10 @@
+<div class="card-container">
+	{{#isMultiple}}
+  	<div class="type-tag">{{QuestionType}}</div>
+  {{/isMultiple}}
+  <div class="question">
+    {{Number}}. {{Question}}
+  </div>
+  <div class="choices">{{HighlightedChoices}}</div>
+  <div class="answer">✅ 正确答案：<strong>{{CorrectAnswer}}</strong></div>
+</div>

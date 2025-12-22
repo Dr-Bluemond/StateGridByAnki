@@ -1,0 +1,58 @@
+@font-face {
+  font-family: 'Source Han Serif CN';
+  src: url('_SourceHanSerifCN-Medium.otf') format('opentype');
+  font-weight: 500;
+  font-display: swap;
+}
+
+.card {
+  font-family: "Source Han Serif CN", serif;
+  font-size: 18px;
+  text-align: left;
+  background-color: #fdfdfd;
+  color: #333;
+  padding: 20px;
+}
+
+.card-container {
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 16px;
+  background-color: #fff;
+}
+
+.question {
+  font-size: 20px;
+	font-weight: bold;
+  margin-bottom: 12px;
+}
+
+.question b {
+  color: #1e50a2;   
+}
+
+
+.choices {
+  margin-left: 10px;
+  line-height: 1.8;
+  font-weight: bold;
+}
+
+.answer {
+  margin-top: 20px;
+  padding: 10px;
+  background-color: #e6f7ff;
+  border-left: 5px solid #1890ff;
+  font-size: 16px;
+}
+
+.type-tag {
+  display: inline-block;
+  background-color: #1890ff; /* 蓝色背景 */
+  color: #fff;               /* 白色文字 */
+  font-weight: 600;
+  font-size: 14px;
+  padding: 2px 8px;
+  border-radius: 4px;        /* 圆角 */
+  margin-bottom: 8px;
+}
