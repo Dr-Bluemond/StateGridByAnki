@@ -1,15 +1,21 @@
-import re
+"""从官方题库 PDF（或提取后的文本）解析题目，默认使用 2027 版。"""
+import argparse
+from collections import Counter
 import json
+from pathlib import Path
+import re
+import subprocess
+
+ROOT = Path(__file__).resolve().parent
+DEFAULT_PDF = ROOT / 'data/9.国家电网有限公司高校毕业生招聘考试公共与行业知识题库（2027版）.pdf'
 
 
 class Parser:
-    """Parser 保存当前部分、当前题型和已解析的题目列表。
-
-    字段：
-    - self.current_type: 当前题型（单选题/多选题/判断题 或 None）
-    - self.current_part: 当前部分（第x部分后的描述或 None）
-    - self.questions: 已解析题目的列表（每项为 dict）
-    """
+    TYPE = re.compile(r'^(?:[一二三四五六七八九十]+、\s*)?(单选题|多选题|判断题)$')
+    PART = re.compile(r'^第[一二三四五六七八九十\d]+部分\s*(.*)$')
+    QUESTION = re.compile(r'^(\d+)、\s*(.*)$')
+    ANSWER = re.compile(r'^(?:标准)?答案\s*[:：]\s*([A-D](?:\s*、\s*[A-D])*)$')
+    OPTION = re.compile(r'^([A-D])[.．]\s*(.*)$')
 
     def __init__(self):
         self.current_type = None
@@ -17,139 +23,123 @@ class Parser:
         self.questions = []
 
     def _preprocess_lines(self, text: str) -> list:
-        lines_raw = text.splitlines()
-        clean_lines = []
-        # 只在整行（去首尾空白后）完全为 "- <数字> -" 时认为是页码行并跳过
-        page_full_line = re.compile(r'^-\s*\d+\s*-$')
-        for raw in lines_raw:
-            if not raw:
+        lines = []
+        for raw in text.splitlines():
+            line = re.sub(r'[ \t\u3000]+', ' ', raw).strip()
+            if not line or re.fullmatch(r'-\s*\d+\s*-|第\s*\d+\s*页\s*共\s*\d+\s*页', line):
                 continue
-            # 仅当整行匹配页码格式时跳过；否则保留原始行的全部内容（去除首尾空白）
-            stripped = raw.strip()
-            if page_full_line.match(stripped):
+            if line in {'国家电网有限公司高校毕业生招聘考试', '公共与行业知识题库'}:
                 continue
-            if stripped:
-                clean_lines.append(stripped)
-        return clean_lines
-
-    def _process(self, text: str):
-        """逐行处理文本，识别题型、部分，并在遇到 标准答案 时完成一道题的解析并存入 self.questions。"""
-        clean_lines = self._preprocess_lines(text)
-        block_lines = []
-        type_keywords = ['单选题', '多选题', '判断题']
-        part_pattern = re.compile(r'^第(.*?)部分\s*(.*)')
-
-        for line in clean_lines:
-            # detect question type header
-            matched_type = False
-            for kw in type_keywords:
-                if kw in line:
-                    self.current_type = kw
-                    print("Detected question type:", line)
-                    matched_type = True
-                    break
-            if matched_type:
-                continue
-
-            # detect part header
-            m = part_pattern.match(line)
-            if m:
-                trailing = m.group(2).strip()
-                self.current_part = trailing if trailing else None
-                print("Detected part:", line)
-                continue
-
-            # normal content
-            block_lines.append(line)
-            if line.startswith('答案'):
-                q = self.parse_question_block(block_lines)
-                self.questions.append(q)
-                block_lines = []
-
-        if block_lines:
-            raise RuntimeError("存在未以『标准答案』结尾的残缺题目。")
-
-    def parse_question_block(self, lines: list) -> dict:
-        """解析一道题块，使用 self.current_type 和 self.current_part 作为元数据。"""
-
-        qid = None
-        question_lines = []
-        options = {}
-        current_option_key = None
-        in_options = False
-        correct = []
-
-        for line in lines:
-
-            # 提取标准答案
-            if line.startswith("答案"):
-                answer_match = re.search(r'答案[:：]\s*([A-D](?:、[A-D])*)', line)
-                if not answer_match:
-                    raise ValueError("标准答案格式错误")
-                correct = answer_match.group(1).split('、')
-                continue
-
-            # 提取题号和第一行题干
-            if qid is None:
-                match = re.match(r'^(\d+)、\s*(.*)', line)
-                if not match:
-                    raise ValueError("题号或题干格式错误")
-                qid = int(match.group(1))
-                question_lines.append(match.group(2))
-                continue
-
-            # 提取选项
-            option_match = re.match(r'^([A-D])[.．]\s*(.*)', line)
-            if option_match:
-                in_options = True
-                current_option_key = option_match.group(1)
-                options[current_option_key] = option_match.group(2)
-            else:
-                if in_options and current_option_key:
-                    options[current_option_key] += line
-                else:
-                    question_lines.append(line)
-
-        if qid is None or not options or not correct:
-            raise ValueError("题目结构不完整")
-
-        expected_keys = [chr(ord('A') + i) for i in range(len(options))]
-        actual_keys = list(options.keys())
-        if actual_keys != expected_keys:
-            raise ValueError(f"题目 {qid} 的选项不是按 A, B, C... 顺序排列：实际为 {actual_keys}")
-
-        for c in correct:
-            if c not in options:
-                raise ValueError(f"题目 {qid} 的正确答案 {c} 不在选项中")
-
-        return {
-            "id": qid,
-            "question": ''.join(question_lines).strip(),
-            "correct_answers": correct,
-            "options": options,
-            "question_type": self.current_type,
-            "part": self.current_part,
-        }
+            lines.append(line)
+        return lines
 
     def parse_questions(self, text: str) -> list:
-        # reset state
-        self.current_type = None
-        self.current_part = None
-        self.questions = []
-        self._process(text)
+        self.__init__()
+        block = []
+        pending_part = False
+        for line in self._preprocess_lines(text):
+            type_match = self.TYPE.fullmatch(line)
+            part_match = self.PART.fullmatch(line)
+            if type_match or part_match:
+                if block or pending_part:
+                    raise ValueError(f'题目或分部标题未完成就遇到标题：{line}')
+                if type_match:
+                    self.current_type = type_match[1]
+                    self.current_part = None
+                else:
+                    self.current_part = part_match[1] or None
+                    pending_part = self.current_part is None
+                continue
+            if pending_part:
+                if self.QUESTION.match(line):
+                    raise ValueError('分部标题缺少名称')
+                self.current_part = line
+                pending_part = False
+                continue
+            if self.QUESTION.match(line) and block:
+                raise ValueError(f'上一题缺少答案：{block[0]}')
+            block.append(line)
+            if re.match(r'^(?:标准)?答案\s*[:：]', line):
+                question = self.parse_question_block(block)
+                expected_id = len(self.questions) + 1
+                if question['id'] != expected_id:
+                    raise ValueError(f'题号应为 {expected_id}，实际为 {question["id"]}')
+                self.questions.append(question)
+                block = []
+        if block or pending_part:
+            raise ValueError(f'存在残缺题目或标题：{block[:1]}')
+        if not self.questions:
+            raise ValueError('没有解析到题目')
         return self.questions
 
-# 示例：读取并解析文件
-if __name__ == "__main__":
-    with open("data/questions.txt", "r", encoding="utf-8") as f:
-        raw_text = f.read()
+    def parse_question_block(self, lines: list) -> dict:
+        first = self.QUESTION.fullmatch(lines[0])
+        answer = self.ANSWER.fullmatch(lines[-1])
+        if not first or not answer:
+            raise ValueError(f'题号或答案格式错误：{lines[0]} / {lines[-1]}')
+        qid = int(first[1])
+        if not self.current_type or not self.current_part:
+            raise ValueError(f'题目 {qid} 缺少题型或分部')
+        question_lines = [first[2]]
+        options = {}
+        current_key = None
+        for line in lines[1:-1]:
+            option = self.OPTION.fullmatch(line)
+            if option:
+                current_key = option[1]
+                if current_key in options:
+                    raise ValueError(f'题目 {qid} 选项重复：{current_key}')
+                options[current_key] = option[2]
+            elif current_key:
+                options[current_key] += line
+            else:
+                question_lines.append(line)
+        question = ''.join(question_lines).strip()
+        correct = re.split(r'\s*、\s*', answer[1])
+        expected_keys = list('AB' if self.current_type == '判断题' else 'ABCD')
+        if not question or list(options) != expected_keys or not all(options.values()):
+            raise ValueError(f'题目 {qid} 题干或选项不完整：{list(options)}')
+        if len(set(correct)) != len(correct) or not set(correct) <= options.keys():
+            raise ValueError(f'题目 {qid} 答案重复或超出选项：{correct}')
+        if self.current_type != '多选题' and len(correct) != 1:
+            raise ValueError(f'题目 {qid} 应只有一个正确答案')
+        if self.current_type == '多选题' and len(correct) < 2:
+            raise ValueError(f'题目 {qid} 多选题应有至少两个正确答案')
+        return {
+            'id': qid,
+            'question': question,
+            'correct_answers': correct,
+            'options': options,
+            'question_type': self.current_type,
+            'part': self.current_part,
+        }
 
+
+def extract_pdf(path: Path) -> str:
+    # layout 保持括号及同一行文本的顺序，避免页脚插入跨页题干。
     try:
-        p = Parser()
-        questions = p.parse_questions(raw_text)
-        print("解析题目数量：", len(questions))
-        with open("data/parsed_questions.json", "w", encoding="utf-8") as f:
-            json.dump(questions, f, ensure_ascii=False, indent=2)
-        print("✅ 所有题目成功解析为 data/parsed_questions.json")
-    except Exception as e:
-        print("❌ 解析失败：", e)
+        return subprocess.run(
+            ['pdftotext', '-layout', '-enc', 'UTF-8', str(path), '-'],
+            check=True, capture_output=True, encoding='utf-8',
+        ).stdout
+    except FileNotFoundError as exc:
+        raise RuntimeError('请先安装 Poppler（macOS：brew install poppler）') from exc
+
+
+def main():
+    cli = argparse.ArgumentParser(description=__doc__)
+    cli.add_argument('input', nargs='?', type=Path, default=DEFAULT_PDF, help='PDF 或 UTF-8 文本')
+    cli.add_argument('--output', type=Path, default=ROOT / 'data/parsed_questions.json')
+    cli.add_argument('--text-output', type=Path, default=ROOT / 'data/questions.txt')
+    args = cli.parse_args()
+    text = extract_pdf(args.input) if args.input.suffix.lower() == '.pdf' else args.input.read_text(encoding='utf-8')
+    questions = Parser().parse_questions(text)
+    # 通过全部校验后才覆盖生成文件。
+    args.text_output.write_text(text, encoding='utf-8')
+    args.output.write_text(json.dumps(questions, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    print(f'解析 {len(questions)} 题：{dict(Counter(q["question_type"] for q in questions))}')
+    print(f'已写入 {args.output}')
+
+
+if __name__ == '__main__':
+    main()
